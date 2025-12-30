@@ -291,6 +291,9 @@ class AnchorHead(BaseDenseHead, BBoxTestMixin):
 
 
     def reg_distill(self, stu_reg, tea_reg, tea_cls, stu_cls, gt_truth,img_metas):
+        """RPN-style bbox KD: decode student/teacher anchors, keep anchors near GT,
+        and supervise student boxes with teacher boxes via GIoU weighted by
+        classification disagreement."""
         def select_single_mlvl(mlvl_tensors, batch_id, detach=True):
             assert isinstance(mlvl_tensors, (list, tuple))
             num_levels = len(mlvl_tensors)

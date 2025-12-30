@@ -691,6 +691,9 @@ class BaseDenseHead(BaseModule, metaclass=ABCMeta):
 
 
     def reg_distill_single_retinanet(self, stu_reg, tea_reg, tea_cls, stu_cls, gt_truth,img_metas):
+        """Align student regression with teacher by filtering anchors near GT,
+        decoding both boxes, and supervising student boxes with teacher boxes
+        using GIoU weighted by teacher/student score gaps."""
         def select_single_mlvl(mlvl_tensors, batch_id, detach=True):
             assert isinstance(mlvl_tensors, (list, tuple))
             num_levels = len(mlvl_tensors)
@@ -1001,6 +1004,8 @@ class BaseDenseHead(BaseModule, metaclass=ABCMeta):
         return reg_total_loss
 
     def reg_distill_single_fcos(self, stu_reg, tea_reg, tea_cls, stu_cls, gt_truth, img_metas):
+        """FCOS variant of bbox KD: decode student/teacher boxes, keep anchors
+        with high IoU to GT, and minimize GIoU weighted by classification gaps."""
         def select_single_mlvl(mlvl_tensors, batch_id, detach=True):
             assert isinstance(mlvl_tensors, (list, tuple))
             num_levels = len(mlvl_tensors)
