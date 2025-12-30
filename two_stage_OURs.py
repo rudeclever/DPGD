@@ -981,6 +981,8 @@ class TwoStageDetector(BaseDetector):
 
         stu_tea_proposal = self.rpn_head.get_bboxes_KD(*stu_bbox_outs, *tea_bbox_outs, img_metas=img_metas,
                                                    cfg=tea_proposal_cfg)
+        # KD proposals: reuse teacher's proposal config and collect IoU-filtered
+        # RoIs for relation-aware distillation.
         relation_batch, positive_batch = self.relationbatch(poposal=stu_tea_proposal, ground_turth=gt_bboxes, thre=0.6)
 
         relation_batch = rela_batch_aug_two_stage(poposal=stu_tea_proposal, relation_batch=relation_batch, positive_batch=positive_batch, threshold=0.5)
@@ -996,6 +998,7 @@ class TwoStageDetector(BaseDetector):
         tea_roifeats = torch.split(tea_roifeats, [rela.size()[0] for rela in relation_batch])
         stu_roifeats = torch.split(stu_roifeats, [rela.size()[0] for rela in relation_batch])
 
+        # Relation KD: enforce student RoI similarity matrices to match teacher.
         teacher_region_correlation_matrices_pool = generate_correlation_matrix(tea_roifeats)
         student_region_correlation_matrices_pool = generate_correlation_matrix(stu_roifeats)
 
@@ -1020,6 +1023,7 @@ class TwoStageDetector(BaseDetector):
                 t_relation = self.teacher_non_local[_i](t_feats[_i])
                 #   print(s_relation.size())
                 # kd_nonlocal_loss += torch.dist(self.adaptation_layers[_i](s_relation), t_relation, p=2)
+                # Feature-level KD: compare normalized non-local responses.
                 kd_nonlocal_loss += torch.dist(norm(self.adaptation_layers[_i](s_relation)), norm(t_relation), p=2)
 
         losses.update({'kd_nonlocal_loss': kd_nonlocal_loss * 7e-5})
@@ -1037,6 +1041,7 @@ class TwoStageDetector(BaseDetector):
         #
         #
         # eps = 1e+7
+        # Classification KD on RPN logits, weighted by disagreement mask.
         for layer in range(len(stu_cls_score)):
             stu_cls_score_sigmoid = stu_cls_score[layer].sigmoid()
             tea_cls_score_sigmoid = tea_cls_score[layer].sigmoid().detach()
@@ -1053,6 +1058,8 @@ class TwoStageDetector(BaseDetector):
         distill_cls_loss = distill_cls_loss * distill_cls_weight
         losses.update({'distill_cls_loss': distill_cls_loss})
 
+        # Bounding-box KD inside reg_distill: align decoded boxes with GIoU
+        # and weight by teacher confidence.
         loss_reg = self.rpn_head.reg_distill(stu_reg=stu_reg_score, tea_reg=tea_reg_score, tea_cls=tea_cls_score,
                                              stu_cls=stu_cls_score, gt_truth=gt_bboxes, img_metas=img_metas)
 

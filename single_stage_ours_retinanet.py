@@ -677,6 +677,7 @@ class SingleStageDetector(BaseDetector):
         tea_proposal_cfg = self.train_cfg.get('rpn_proposal_KD',
                                           self.test_cfg)
 
+        # --- KD path starts: student follows teacher proposals and features ---
         stu_proposal = self.bbox_head.get_bboxes_KD_single(*stu_bbox_outs, img_metas=img_metas,
                                                            cfg=tea_proposal_cfg)
         stu_tea_proposal = []
@@ -697,6 +698,8 @@ class SingleStageDetector(BaseDetector):
         # for i in range(len(stu_tea_proposal)):
         #     print(stu_tea_proposal[i].size())
 
+        # Build positive relations per image (IoU thresholded) to decide which RoIs
+        # are used for relational distillation on top of teacher proposals.
         relation_batch, positive_batch, iou = self.relationbatch(poposal=stu_tea_proposal, ground_turth=gt_bboxes, thre=0.6)
 
         relation_batch = rela_batch_aug_two_stage(poposal=stu_tea_proposal, relation_batch=relation_batch, positive_batch=positive_batch, threshold=0.5)
@@ -709,6 +712,8 @@ class SingleStageDetector(BaseDetector):
         tea_roifeats = torch.split(tea_roifeats, [rela.size()[0] for rela in relation_batch])
         stu_roifeats = torch.split(stu_roifeats, [rela.size()[0] for rela in relation_batch])
 
+        # Correlation matrices capture intra-RoI relations; student is forced
+        # to mimic the teacher's pairwise similarities.
         teacher_region_correlation_matrices_pool = generate_correlation_matrix(tea_roifeats)
         student_region_correlation_matrices_pool = generate_correlation_matrix(stu_roifeats)
 
@@ -725,6 +730,8 @@ class SingleStageDetector(BaseDetector):
                 t_relation = self.teacher_non_local[_i](t_feats[_i])
                 #   print(s_relation.size())
                 #kd_nonlocal_loss += torch.dist(self.adaptation_layers[_i](s_relation), t_relation, p=2)
+                # Feature-level KD: adapt student feature maps and match the
+                # teacher's non-local responses.
                 kd_nonlocal_loss += torch.dist(self.adaptation_layers[_i](s_relation), t_relation, p=2)
 
         losses.update({'kd_nonlocal_loss':kd_nonlocal_loss * 7e-5 * 1})
@@ -736,6 +743,8 @@ class SingleStageDetector(BaseDetector):
         distill_cls_loss = 0
         distill_cls_weight = 0.06
         #
+        # Classification KD: BCE between teacher/student logits, reweighted by
+        # teacher-student disagreement (mask) to focus on hard locations.
         for layer in range(len(stu_cls_score)):
             stu_cls_score_sigmoid = stu_cls_score[layer].sigmoid()
             tea_cls_score_sigmoid = tea_cls_score[layer].sigmoid().detach()
@@ -751,6 +760,8 @@ class SingleStageDetector(BaseDetector):
         distill_cls_loss = distill_cls_loss * distill_cls_weight
         losses.update({'distill_cls_loss': distill_cls_loss})
 
+        # Bounding-box KD: align regression outputs to teacher boxes with GIoU,
+        # using score-aware weights inside reg_distill_single_retinanet.
         loss_reg = self.bbox_head.reg_distill_single_retinanet(stu_reg=stu_reg_score, tea_reg=tea_reg_score, tea_cls=tea_cls_score,
                                              stu_cls=stu_cls_score, gt_truth=gt_bboxes, img_metas=img_metas)
 
